@@ -1,0 +1,7 @@
+.env
+credentials.json
+node_modules/
+dist/
+*.log
+vendor/ocr/ocr-bin
+.claude/worktrees/

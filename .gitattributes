@@ -1,0 +1,6 @@
+# Shell scripts and Node scripts run on the Linux VPS. A CRLF checkout on
+# Windows makes bash fail with "syntax error: unexpected end of file" on the
+# trailing \r -- this broke a deploy via npm's postinstall hook. Pin them to LF
+# regardless of the operator's core.autocrlf setting.
+*.sh text eol=lf
+*.mjs text eol=lf

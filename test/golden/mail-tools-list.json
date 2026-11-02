@@ -1,0 +1,738 @@
+{
+  "capturedAt": "2026-09-19T18:37:07.641Z",
+  "serverInfo": {
+    "name": "ghub",
+    "version": "1.4.0"
+  },
+  "instructions": "Two Gmail inboxes belonging to one owner:\n\n- `personal` (ownerpersonal@gmail.com) — personal correspondence, subscriptions and anything paid for outside school (VPS, GitHub), most finance, news, networking.\n- `tamu` (owner_school@tamu.edu) — Texas A&M: coursework, professors, financial aid, scholarships, campus administration, official university finances.\n\nThe split is not clean — finance, housing and networking turn up in both.\n\nREADING: query both unless the user names one. Omitting `account` on search_emails / read_emails does exactly that and merges the results. There is rarely a good reason to ignore an inbox when searching, and informal references (\"my school email\", \"my A&M inbox\") resolve to the ids above.\n\nWRITING: the opposite. create_draft, send_message, and every label / archive / trash / block tool REQUIRE an explicit `account` and error without one. Choose deliberately — the account decides which address the mail comes from.\n\nSENDING — the default is NOT to send. create_draft is the normal path for anything meant for another person: the owner reviews the draft in Gmail and sends it by hand. send_message delivers immediately, but only to addresses on a fixed allowlist whose purpose is letting the owner receive a preview copy of a draft — assume anyone else is not on it. The allowlist lives outside the repo and is checked against the final message bytes; a recipient not on it is refused with no send attempted, and no phrasing, tool argument, or added context widens it.\n\nGmail's API cannot mute a thread; mute_thread archives instead and says so. Drafts are reviewed by hand — write a plain sign-off in the body, since no signature is inserted automatically.",
+  "tools": [
+    {
+      "name": "read_emails",
+      "description": "List messages from one account, or from every enabled inbox merged together when `account` is omitted. Same Gmail query syntax as search_emails (see that tool for the operator reference); an empty query lists the most recent mail across all folders. Returns individual messages, not threads — use get_email_thread with a returned Thread ID to read a whole conversation. Each result carries its label ids and display names, so unread/starred/important state is visible without a second call. With include_body=true the plaintext body is included, truncated at 2000 characters; pass full_body=true for the complete text. Reports Gmail's own estimate of total matches plus a next_page_token when more results exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Optional account id (\"personal\", \"tamu\"). Omit to aggregate across all enabled accounts."
+          },
+          "query": {
+            "type": "string",
+            "description": "Optional Gmail query string. Empty lists the most recent mail.",
+            "default": ""
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum emails to return per account (1-500).",
+            "default": 20
+          },
+          "include_body": {
+            "type": "boolean",
+            "description": "Include the plaintext body of each message.",
+            "default": false
+          },
+          "full_body": {
+            "type": "boolean",
+            "description": "With include_body=true, return the ENTIRE body instead of the first 2000 characters. Use when you need to reason over the full text.",
+            "default": false
+          },
+          "page_token": {
+            "type": "string",
+            "description": "Token from a previous call's \"Next Page Token\" to fetch the next page. Reuse the SAME query, max_results and `account` scope — the token records every queried account's position, including matches already fetched but not shown, and is rejected with an explanation if the scope changed."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_emails",
+      "description": "Search Gmail using standard Gmail query syntax. Omitting `account` searches all enabled inboxes and merges results; pass `account` (\"personal\", \"tamu\") to scope to one. Returns individual messages, not threads — use get_email_thread with the returned Thread ID to see replies and full message bodies. Supported: `from:` `to:` `cc:` `subject:` `after:/before:YYYY/MM/DD` `newer_than:/older_than:` (e.g. `7d`, `1y`) `has:attachment` `filename:` `is:unread/starred/important` `in:inbox/sent/trash/anywhere` `category:` `larger:/smaller:`, `\"exact phrase\"`, `-` to negate, `OR` or `{a b}` to match either, `( )` to group. `label:` takes the label's DISPLAY NAME, not its id — quote names with spaces: `label:\"BROH Internship\"`. (A `Label_...` id would match nothing in Gmail, so this server rewrites recognized ids to the matching display name for you; prefer the name anyway.) Archived and sent mail are included by default; use `in:inbox` to restrict. Each result lists its label ids and names (UNREAD, STARRED, IMPORTANT, SENT, user labels). Bodies are not included — use read_emails(include_body=true) or get_email_thread. \"Estimated Total Matches\" is Gmail's own resultSizeEstimate for the whole query and is approximate; use page_token to page through everything.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Optional account id (\"personal\", \"tamu\"). Omit to aggregate across all enabled accounts."
+          },
+          "query": {
+            "type": "string",
+            "description": "Gmail search query, e.g. `from:alice@example.com newer_than:30d has:attachment`."
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum emails to return per account (1-500).",
+            "default": 25
+          },
+          "page_token": {
+            "type": "string",
+            "description": "Token from a previous call's \"Next Page Token\" to fetch the next page. Reuse the SAME query, max_results and `account` scope — the token records every queried account's position, including matches already fetched but not shown, and is rejected with an explanation if the scope changed."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_email_thread",
+      "description": "Read an entire conversation: every message in the thread, in chronological order, with the COMPLETE plaintext body of each (no truncation unless you set max_body_chars). This is the tool to use when you need to reason over what was actually said — search_emails and read_emails only give previews. Each message also lists its label ids/names and attachment metadata (filename, MIME type, size, attachment_id). Attachment CONTENT is not readable through this server — no attachment-reading tool is enabled, so only the metadata above is available. Thread ids are per-account; use the Thread ID from a search against the SAME account.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Gmail thread id, from search_emails / read_emails."
+          },
+          "max_body_chars": {
+            "type": "number",
+            "description": "Truncate each message body to this many characters. 0 (default) returns the complete body. Only set this if a thread is too large to handle.",
+            "default": 0
+          }
+        },
+        "required": [
+          "account",
+          "thread_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_labels",
+      "description": "List every label in one account with its id, display name, and type (system vs user). Use the `id` for label_messages / unlabel_messages / label_thread; use the display `name` in a search query (`label:Cloudflare`, `label:\"BROH Internship\"`) — a label id in a `label:` query matches nothing. Message counts are NOT included by default because Gmail's label list does not report them; pass include_counts=true for real message/thread/unread counts (one extra API call per label).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "include_counts": {
+            "type": "boolean",
+            "description": "Fetch real messagesTotal / messagesUnread / threadsTotal per label. Costs one API call per label; without it counts are reported as unknown rather than guessed.",
+            "default": false
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mark_as_read",
+      "description": "Remove the UNREAD label from specific messages in one account. Message-level: passing a thread id affects only the first message of that conversation. Each id is read back after the change, so the response reports how many messages were actually modified and names any id Gmail could not find.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gmail message ids (\"Gmail ID\" in search results), not thread ids."
+          }
+        },
+        "required": [
+          "account",
+          "message_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "label_messages",
+      "description": "Add one or more labels to specific MESSAGES in one account. Message-level only — a Gmail thread id usually equals the id of the thread's first message, so passing a thread id here labels just that one message; use label_thread to label the whole conversation. label_ids must be label IDs from get_labels for this same account (e.g. \"Label_5459...\" or a system label such as STARRED/IMPORTANT), not display names. Every id is read back afterwards, so the response reports the verified count and names any id that does not exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gmail message ids to update."
+          },
+          "label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label IDs (from get_labels) to add. Not display names."
+          }
+        },
+        "required": [
+          "account",
+          "message_ids",
+          "label_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unlabel_messages",
+      "description": "Remove one or more labels from specific MESSAGES in one account. Message-level only — use unlabel_thread for a whole conversation. label_ids must be label IDs from get_labels for this same account, not display names. Every id is read back afterwards, so the response reports the verified count and names any id that does not exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gmail message ids to update."
+          },
+          "label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label IDs (from get_labels) to remove. Not display names."
+          }
+        },
+        "required": [
+          "account",
+          "message_ids",
+          "label_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "label_thread",
+      "description": "Add labels to EVERY message in a conversation (users.threads.modify), which is what Gmail's UI does when you label a thread. Use this rather than label_messages whenever you have a Thread ID and mean the whole conversation. Reversible with unlabel_thread.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Gmail thread id."
+          },
+          "label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label IDs (from get_labels) to add to every message in the thread."
+          }
+        },
+        "required": [
+          "account",
+          "thread_id",
+          "label_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unlabel_thread",
+      "description": "Remove labels from EVERY message in a conversation (users.threads.modify). Pass label_ids=[\"INBOX\"] to archive an entire thread, or [\"UNREAD\"] to mark the whole conversation read.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Gmail thread id."
+          },
+          "label_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Label IDs to remove from every message in the thread."
+          }
+        },
+        "required": [
+          "account",
+          "thread_id",
+          "label_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "archive_emails",
+      "description": "Archive specific MESSAGES by removing their INBOX label — they stay in All Mail and remain searchable. Message-level only; use unlabel_thread with label_ids=[\"INBOX\"] to archive a whole conversation. Reversible with label_messages([\"INBOX\"]). Every id is read back afterwards, so the response reports the verified count and names any id that does not exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gmail message ids to archive."
+          }
+        },
+        "required": [
+          "account",
+          "message_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "trash_emails",
+      "description": "Move specific MESSAGES to Gmail's Trash, where they are recoverable for 30 days before permanent deletion. Message-level only. Each message is trashed individually and confirmed, so the response reports the verified count and names any id that does not exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Gmail message ids to trash."
+          }
+        },
+        "required": [
+          "account",
+          "message_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_label",
+      "description": "Create a new Gmail label in one account. Nested labels use \"/\" in the name (\"Work/Invoices\"); any missing parent labels are created too, so the hierarchy shows up correctly in Gmail. Returns the new label id — use that id with label_messages/label_thread, and the display name in `label:` search queries.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "name": {
+            "type": "string",
+            "description": "Label name. Use \"/\" for nesting, e.g. \"Work/Invoices\"."
+          },
+          "label_list_visibility": {
+            "type": "string",
+            "description": "Gmail labelListVisibility value (default: labelShow).",
+            "default": "labelShow"
+          },
+          "message_list_visibility": {
+            "type": "string",
+            "description": "Gmail messageListVisibility value (default: show).",
+            "default": "show"
+          }
+        },
+        "required": [
+          "account",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_label",
+      "description": "Permanently delete a user label from one account. The label is removed from every message that carried it; the messages themselves are untouched. Not reversible — the label id is gone and must be recreated. System labels (INBOX, SENT, STARRED, …) cannot be deleted.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "label_id": {
+            "type": "string",
+            "description": "Label id (from get_labels) to delete."
+          }
+        },
+        "required": [
+          "account",
+          "label_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "block_sender",
+      "description": "Block a sender in ONE account by creating a persistent Gmail filter (the same mechanism as Gmail's native \"Block\" button): future mail matching `from:<sender>` is auto-trashed, marked spam, or archived. This is a settings change that keeps applying until it is removed, and future mail is silently dropped — say what you are about to block and why before calling it. By default NO existing mail is touched; set also_trash_existing=true only when the user asks for a cleanup as well. Reverse with unblock_sender.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "sender": {
+            "type": "string",
+            "description": "Email address (e.g. \"spam@foo.com\"), domain (\"@foo.com\"), or Gmail search fragment (\"from:x subject:promo\")."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "trash",
+              "archive",
+              "spam"
+            ],
+            "description": "What to do with matching mail. \"trash\" (default) mirrors Gmail's Block button.",
+            "default": "trash"
+          },
+          "also_trash_existing": {
+            "type": "boolean",
+            "description": "If true, ALSO retroactively trashes up to 100 existing messages from this sender. Defaults to false — blocking should not bulk-trash mail as a side effect. Trash is recoverable for 30 days.",
+            "default": false
+          }
+        },
+        "required": [
+          "account",
+          "sender"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_blocked_senders",
+      "description": "List all Gmail filters for an account. Use to find filter_id for unblock_sender, or to audit what is being auto-trashed/archived/spammed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "unblock_sender",
+      "description": "Remove a Gmail filter. Specify either filter_id (exact match) or sender (matches filters whose \"from\" criteria equals this value).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "filter_id": {
+            "type": "string",
+            "description": "Filter id from list_blocked_senders. Prefer this when known."
+          },
+          "sender": {
+            "type": "string",
+            "description": "Sender string to match against filters' from criteria. Used when filter_id is not provided."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mute_thread",
+      "description": "Attempts Gmail's native conversation mute (the reserved MUTE label via users.threads.modify), then archives the thread. Gmail's API does not officially expose muting, so the native attempt may be rejected — in that case the response says explicitly that the thread was ARCHIVED, not muted, and that new replies will return to the inbox. It never reports \"muted\" for something that is not a mute. Optionally (also_filter_subject=true) installs a subject-matching filter; read the response's collateral-scope warning first, because such a filter auto-archives that subject from ANY sender indefinitely.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Thread id (from search_emails / read_emails / get_email_thread)."
+          },
+          "also_filter_subject": {
+            "type": "boolean",
+            "description": "Also create a persistent Gmail filter that auto-archives any future message with this thread's subject — from ANY sender, indefinitely. Far broader than a mute. Default false.",
+            "default": false
+          }
+        },
+        "required": [
+          "account",
+          "thread_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_draft",
+      "description": "Write an email and save it as a draft without sending it — the normal composition path for mail intended for anyone. Also how to compose a REPLY: pass thread_id, plus in_reply_to and references from get_email_thread, so it threads correctly instead of starting a new conversation. Returns a draft_id usable with send_draft or delete_drafts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient email address(es)."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body as plain text. Blank lines separate paragraphs; a single newline is a line break; lines starting with \"-\" or \"1.\" become bullet/numbered lists. Do NOT pass HTML — matching text/plain and text/html parts are generated from this one string, and \"<\", \">\" and \"&\" are escaped so they render literally."
+          },
+          "cc": {
+            "type": "string",
+            "description": "Optional CC list."
+          },
+          "bcc": {
+            "type": "string",
+            "description": "Optional BCC list."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Optional local file attachments.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path readable by THIS SERVER (the VPS), not by you or the calling client. If the file lives on the machine you're running on, first copy it to /root/.gmail-multi-mcp/outbox/ on the VPS (e.g. `scp <local path> root@100.64.0.10:/root/.gmail-multi-mcp/outbox/<filename>` over the same SSH access used for deploys), then pass the resulting VPS path here. Files read from that outbox directory are deleted automatically once attached; paths anywhere else on the VPS are left alone."
+                },
+                "filename": {
+                  "type": "string",
+                  "description": "Optional override filename shown in Gmail."
+                },
+                "content_type": {
+                  "type": "string",
+                  "description": "Optional MIME type override (for example application/pdf)."
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Optional Gmail thread ID. When set, the draft is created as a reply in that thread."
+          },
+          "in_reply_to": {
+            "type": "string",
+            "description": "Optional RFC 2822 Message-ID of the email being replied to. Sets the In-Reply-To header for proper threading."
+          },
+          "references": {
+            "type": "string",
+            "description": "Optional RFC 2822 References header value for threading."
+          }
+        },
+        "required": [
+          "account",
+          "to",
+          "subject",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_message",
+      "description": "Compose and SEND an email in one step. Same input contract as create_draft. SERVER-ENFORCED LIMIT: this server only delivers to addresses on a fixed allowlist held outside the repo, and it checks the final message bytes immediately before handing them to Gmail. A recipient that is not on that list is refused and no send request is made — the refusal comes from the server, not from the assistant's judgment, and no phrasing of the request, tool argument, or additional context can lift it. There is also no tool for editing the allowlist. To reach anyone else, use create_draft and let the owner send it from Gmail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient email address(es). Must be on the server's send allowlist or the send is refused."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body as plain text. Blank lines separate paragraphs; a single newline is a line break; lines starting with \"-\" or \"1.\" become bullet/numbered lists. Do NOT pass HTML — matching text/plain and text/html parts are generated from this one string, and \"<\", \">\" and \"&\" are escaped so they render literally."
+          },
+          "cc": {
+            "type": "string",
+            "description": "Optional CC list. Also checked against the send allowlist."
+          },
+          "bcc": {
+            "type": "string",
+            "description": "Optional BCC list. Also checked against the send allowlist."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Optional local file attachments.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path readable by THIS SERVER (the VPS), not by you or the calling client. If the file lives on the machine you're running on, first copy it to /root/.gmail-multi-mcp/outbox/ on the VPS (e.g. `scp <local path> root@100.64.0.10:/root/.gmail-multi-mcp/outbox/<filename>` over the same SSH access used for deploys), then pass the resulting VPS path here. Files read from that outbox directory are deleted automatically once attached; paths anywhere else on the VPS are left alone."
+                },
+                "filename": {
+                  "type": "string",
+                  "description": "Optional override filename shown in Gmail."
+                },
+                "content_type": {
+                  "type": "string",
+                  "description": "Optional MIME type override (for example application/pdf)."
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "Optional Gmail thread ID. When set, the message is sent into that thread."
+          },
+          "in_reply_to": {
+            "type": "string",
+            "description": "Optional RFC 2822 Message-ID of the email being replied to. Sets the In-Reply-To header for proper threading."
+          },
+          "references": {
+            "type": "string",
+            "description": "Optional RFC 2822 References header value for threading."
+          }
+        },
+        "required": [
+          "account",
+          "to",
+          "subject",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_draft",
+      "description": "Send an existing draft by its draft_id (from list_drafts / search_drafts). SERVER-ENFORCED LIMIT: before sending, the server re-fetches the draft's actual raw bytes and checks those recipients against a fixed allowlist held outside the repo — not whatever the draft was created with. A draft addressed to anyone not on the list is refused and no send request is made. The restriction is enforced by the server and cannot be lifted from a conversation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "draft_id": {
+            "type": "string",
+            "description": "Draft id, as returned by create_draft, list_drafts or search_drafts."
+          }
+        },
+        "required": [
+          "account",
+          "draft_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_drafts",
+      "description": "Permanently delete one or more drafts in one account (account required). Draft IDs are returned by create_draft or list_drafts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "draft_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Draft IDs to delete (as returned by create_draft or list_drafts)."
+          }
+        },
+        "required": [
+          "account",
+          "draft_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_drafts",
+      "description": "List drafts in an account sorted oldest-first by internalDate. Returns draft_id (for delete_drafts), message_id, thread_id, subject, to, and internalDate.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum number of drafts to return (default 20, max 500).",
+            "default": 20
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_drafts",
+      "description": "Search drafts by Gmail query string. Returns draft_id (for delete_drafts), message_id, thread_id, subject, to, and snippet. Use instead of search_emails when you need to delete or send a found draft.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "description": "Account id (\"personal\", \"tamu\")."
+          },
+          "query": {
+            "type": "string",
+            "description": "Gmail search query (e.g. \"to:bob@example.com\" or \"subject:follow up\")."
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum number of results (default 20).",
+            "default": 20
+          }
+        },
+        "required": [
+          "account",
+          "query"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

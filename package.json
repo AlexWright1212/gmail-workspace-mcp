@@ -1,0 +1,47 @@
+{
+  "name": "ghub",
+  "version": "1.6.2",
+  "description": "Multi-inbox Gmail, Drive, Sheets, Docs, and Calendar MCP server with built-in OAuth onboarding",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "ghub": "dist/index.js"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "postinstall": "bash scripts/build-ocr.sh"
+  },
+  "keywords": [
+    "mcp",
+    "gmail",
+    "multi-inbox",
+    "oauth",
+    "model-context-protocol"
+  ],
+  "author": "Tyler Szakacs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "@types/express": "^5.0.6",
+    "express": "^5.2.1",
+    "google-auth-library": "^9.15.1",
+    "googleapis": "^144.0.0",
+    "mammoth": "^1.9.0",
+    "nodemailer": "^9.0.5",
+    "officeparser": "^5.0.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/nodemailer": "^8.0.1",
+    "typescript": "^5.7.3"
+  }
+}
